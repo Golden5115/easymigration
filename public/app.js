@@ -1469,13 +1469,14 @@ logistics@globalhaulage.com,true,868204054000001,Volvo FH16 Semi-Truck,true,2026
         v.imei.includes(query) ||
         v.plateNumber.toLowerCase().includes(query) ||
         v.simNumber.includes(query) ||
-        v.protocol.toLowerCase().includes(query)
+        v.protocol.toLowerCase().includes(query) ||
+        (v.clientEmail && v.clientEmail.toLowerCase().includes(query))
       );
     });
 
     if (filtered.length === 0) {
       const tr = document.createElement('tr');
-      tr.innerHTML = `<td colspan="10" style="text-align: center; padding: 24px; color: var(--text-dim);">No vehicles found matching current filter.</td>`;
+      tr.innerHTML = `<td colspan="11" style="text-align: center; padding: 24px; color: var(--text-dim);">No vehicles found matching current filter.</td>`;
       migTableBody.appendChild(tr);
       return;
     }
@@ -1507,12 +1508,15 @@ logistics@globalhaulage.com,true,868204054000001,Volvo FH16 Semi-Truck,true,2026
         </div>
       `;
 
+      const usersDisplay = v.clientEmail || '—';
+
       tr.innerHTML = `
         <td><input type="checkbox" class="mig-row-checkbox" data-imei="${v.imei}" ${v.selected ? 'checked' : ''}></td>
         <td>${onlineBadge}</td>
         <td><strong>${escapeHtml(v.name)}</strong></td>
         <td><code class="mono-text" style="color: #38bdf8;">${escapeHtml(v.imei)}</code></td>
         <td>${escapeHtml(v.plateNumber || 'N/A')}</td>
+        <td style="font-size: 0.8rem; color: #38bdf8; max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escapeHtml(usersDisplay)}">${escapeHtml(usersDisplay)}</td>
         <td><span class="protocol-badge">${escapeHtml(v.protocol || 'gt06')}</span></td>
         <td>${escapeHtml(v.simNumber || 'N/A')}</td>
         <td>${expireCellHtml}</td>
@@ -1725,27 +1729,30 @@ logistics@globalhaulage.com,true,868204054000001,Volvo FH16 Semi-Truck,true,2026
         return;
       }
 
-      const clientEmail = (speedoClientEmailInput && speedoClientEmailInput.value.trim()) ||
-                          (ctEmailInput.value || '').trim() || selected[0].clientEmail || 'client@speedotrack.com';
+      const overrideEmail = (speedoClientEmailInput && speedoClientEmailInput.value.trim()) || '';
       const defaultPass = (speedoClientDefaultPassInput && speedoClientDefaultPassInput.value.trim()) || 'Tracker1';
+
+      const targetDesc = overrideEmail 
+        ? overrideEmail 
+        : 'Source accounts from Car Tracker Nigeria (mapped per vehicle)';
 
       const confirmMsg = `📦 PROVISION & ASSIGN VEHICLES (${selected.length} VEHICLES)\n\n` +
         `Dealer Account: ${speedoAuth.username} (${speedoAuth.domain})\n` +
-        `Client Account to Create/Link: ${clientEmail}\n\n` +
+        `Target Client Account(s): ${targetDesc}\n\n` +
         `This will:\n` +
-        `1. Register client account "${clientEmail}" under dealer "${speedoAuth.username}" on Speedotrack.\n` +
+        `1. Register client account(s) under dealer "${speedoAuth.username}" on Speedotrack.\n` +
         `2. Create vehicle objects with IMEI, Plate Number, SIM Number, and Expiration Date.\n` +
-        `3. Link and assign all ${selected.length} vehicles under "${clientEmail}".\n\n` +
+        `3. Link and assign all ${selected.length} vehicles under the target account(s) while PRESERVING already-linked users (supports multiple users per vehicle).\n\n` +
         `⚠️ NOTE: Trackers will NOT be repointed yet. They will continue reporting safely to Car Tracker Nigeria.\n\n` +
         `Proceed with Provisioning?`;
 
       if (!confirm(confirmMsg)) return;
 
-      await runStep1Migration(selected, clientEmail, speedoAuth, defaultPass);
+      await runStep1Migration(selected, overrideEmail, speedoAuth, defaultPass);
     });
   }
 
-  async function runStep1Migration(vehiclesToProcess, clientEmail, speedoAuth, defaultPass = 'Tracker1') {
+  async function runStep1Migration(vehiclesToProcess, overrideEmail, speedoAuth, defaultPass = 'Tracker1') {
     if (isMigrating) return;
     isMigrating = true;
     isMigPaused = false;
@@ -1762,7 +1769,13 @@ logistics@globalhaulage.com,true,868204054000001,Volvo FH16 Semi-Truck,true,2026
 
     logMig('info', `========================================================`);
     logMig('info', `STARTING PROVISIONING & OBJECT LINKING FOR ${total} VEHICLE(S)`);
-    logMig('info', `Client: ${clientEmail} under Dealer: ${speedoAuth.username}`);
+    logMig('info', `Destination Dealer: ${speedoAuth.username}`);
+    if (overrideEmail) {
+      logMig('info', `Assigning to Override Account(s): ${overrideEmail}`);
+    } else {
+      logMig('info', `Assigning to source account(s) mapped per vehicle from Car Tracker Nigeria`);
+    }
+    logMig('info', `Multi-user retention enabled: existing users will NOT be removed.`);
     logMig('info', `========================================================`);
 
     for (let i = 0; i < vehiclesToProcess.length; i++) {
@@ -1778,13 +1791,16 @@ logistics@globalhaulage.com,true,868204054000001,Volvo FH16 Semi-Truck,true,2026
       const v = vehiclesToProcess[i];
       updateRowState(v.imei, 'migrating', 'Provisioning...');
 
+      // Determine target emails for this vehicle: override if specified, otherwise vehicle's own client emails, otherwise fallback
+      const targetEmails = overrideEmail || v.clientEmail || (ctEmailInput && ctEmailInput.value.trim()) || 'client@speedotrack.com';
+
       // Determine object expiration per Car Tracker Nigeria OpenAPI spec
       const vehExpireDate = v.expireDate ? normalizeDate(v.expireDate) : '';
       const vehExpire = v.expire !== undefined
         ? Boolean(v.expire)
         : Boolean(vehExpireDate && !['never', 'none', 'lifetime', '0000-00-00', '-', 'unlimited'].includes(vehExpireDate.toLowerCase()));
 
-      logMig('info', `[${i + 1}/${total}] Provisioning ${v.name} (IMEI: ${v.imei}, Plate: ${v.plateNumber || 'N/A'}, SIM: ${v.simNumber || 'N/A'}, Expiry: ${vehExpire ? vehExpireDate : 'Unlimited'})...`);
+      logMig('info', `[${i + 1}/${total}] Provisioning ${v.name} (IMEI: ${v.imei}, Plate: ${v.plateNumber || 'N/A'}, SIM: ${v.simNumber || 'N/A'}, Expiry: ${vehExpire ? vehExpireDate : 'Unlimited'}) for user(s): [${targetEmails}]...`);
 
       let hasError = false;
 
@@ -1799,7 +1815,7 @@ logistics@globalhaulage.com,true,868204054000001,Volvo FH16 Semi-Truck,true,2026
             username: speedoAuth.username,
             password: speedoAuth.password,
             row: {
-              email: clientEmail,
+              email: targetEmails,
               password: defaultPass,
               send_credentials: false,
               imei: v.imei,
@@ -1814,7 +1830,7 @@ logistics@globalhaulage.com,true,868204054000001,Volvo FH16 Semi-Truck,true,2026
 
         const provData = await provRes.json();
         if (provData.ok || (provData.steps && provData.steps.object?.status === 'success')) {
-          logMig('success', `[${v.imei}] Linked on Speedotrack under ${clientEmail} (Expiry: ${vehExpire ? vehExpireDate : 'Unlimited'})`);
+          logMig('success', `[${v.imei}] Linked on Speedotrack under [${provData.email || targetEmails}] (Expiry: ${vehExpire ? vehExpireDate : 'Unlimited'})`);
         } else {
           logMig('warn', `[${v.imei}] Speedotrack provision: ${provData.summary || provData.error}`);
           if (provData.steps?.object?.status === 'error') hasError = true;
@@ -1841,8 +1857,8 @@ logistics@globalhaulage.com,true,868204054000001,Volvo FH16 Semi-Truck,true,2026
     }
 
     logMig('info', `========================================================`);
-    logMig('success', `Provisioning Finished: ${doneCount} of ${total} vehicles provisioned & linked under ${clientEmail}!`);
-    logMig('info', `All vehicle records, plates, SIMs, and expiration dates are configured on Speedotrack.`);
+    logMig('success', `Provisioning Finished: ${doneCount} of ${total} vehicles provisioned & linked successfully!`);
+    logMig('info', `All vehicle records, plates, SIMs, expiration dates, and multi-user assignments are configured on Speedotrack.`);
     logMig('info', `👉 Next: Switch to the "Vehicle Repointing & OTA Cutover" tab to point physical devices to server.cartracker.com.ng.`);
     logMig('info', `========================================================`);
 
@@ -1875,21 +1891,21 @@ logistics@globalhaulage.com,true,868204054000001,Volvo FH16 Semi-Truck,true,2026
         return;
       }
 
-      const clientEmail = (speedoClientEmailInput && speedoClientEmailInput.value.trim()) ||
-                          (ctEmailInput.value || '').trim() || candidate.clientEmail || 'client@speedotrack.com';
+      const overrideEmail = (speedoClientEmailInput && speedoClientEmailInput.value.trim()) || '';
+      const targetEmails = overrideEmail || candidate.clientEmail || (ctEmailInput.value || '').trim() || 'client@speedotrack.com';
       const defaultPass = (speedoClientDefaultPassInput && speedoClientDefaultPassInput.value.trim()) || 'Tracker1';
 
       const confirmMsg = `🧪 RUN PILOT PROVISION ON 1 VEHICLE\n\n` +
         `Vehicle: ${candidate.name}\n` +
         `IMEI: ${candidate.imei}\n` +
         `Speedotrack Dealer: ${speedoAuth.username}\n` +
-        `Speedotrack Client: ${clientEmail}\n\n` +
-        `This will register "${clientEmail}" under "${speedoAuth.username}" and provision this single vehicle on Speedotrack.\n\n` +
+        `Client Account(s): ${targetEmails}\n\n` +
+        `This will register "${targetEmails}" under "${speedoAuth.username}" and provision this single vehicle on Speedotrack without unlinking existing users.\n\n` +
         `Proceed with Pilot Provisioning?`;
 
       if (!confirm(confirmMsg)) return;
 
-      await runStep1Migration([candidate], clientEmail, speedoAuth, defaultPass);
+      await runStep1Migration([candidate], overrideEmail, speedoAuth, defaultPass);
     });
   }
 

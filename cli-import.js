@@ -214,7 +214,40 @@ async function dealerRegisterUser(cleanDomain, cookies, managerId, email, sendCr
   return (await res.text()).trim();
 }
 
+async function dealerGetObjectData(cleanDomain, cookies, imei) {
+  try {
+    const postData = new URLSearchParams({
+      cmd: 'load_object_data',
+      imei: String(imei).trim()
+    });
+    const res = await fetch(`${cleanDomain}/func/fn_cpanel.objects.php`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Cookie': cookies },
+      body: postData.toString()
+    });
+    return await res.json().catch(() => null);
+  } catch {
+    return null;
+  }
+}
+
 async function dealerAddObject(cleanDomain, cookies, managerId, imei, name, expire, expireDate, userId, plateNumber = '', simNumber = '') {
+  const existingData = await dealerGetObjectData(cleanDomain, cookies, imei);
+  let existingUserIds = [];
+  if (existingData) {
+    if (Array.isArray(existingData.users)) {
+      existingUserIds = existingData.users.map(u => String(u.value || u.id || u)).filter(Boolean);
+    } else if (Array.isArray(existingData.user_ids)) {
+      existingUserIds = existingData.user_ids.map(String).filter(Boolean);
+    }
+  }
+
+  const incomingUserIds = Array.isArray(userId)
+    ? userId.map(String).filter(Boolean)
+    : (userId ? [String(userId)] : []);
+
+  const combinedUserIds = Array.from(new Set([...existingUserIds, ...incomingUserIds])).filter(Boolean);
+
   const postData = new URLSearchParams({
     cmd: 'add_object',
     name: name,
@@ -228,7 +261,7 @@ async function dealerAddObject(cleanDomain, cookies, managerId, imei, name, expi
     active: 'true',
     object_expire: expire ? 'true' : 'false',
     object_expire_dt: expire ? expireDate : '',
-    user_ids: userId ? JSON.stringify([String(userId)]) : '[]'
+    user_ids: JSON.stringify(combinedUserIds)
   });
   const res = await fetch(`${cleanDomain}/func/fn_cpanel.objects.php`, {
     method: 'POST',
@@ -253,21 +286,41 @@ async function dealerAssignObject(cleanDomain, cookies, userId, imei) {
 }
 
 async function dealerLinkObjectUser(cleanDomain, cookies, managerId, imei, name, expire, expireDate, userId, plateNumber = '', simNumber = '') {
+  const existingData = await dealerGetObjectData(cleanDomain, cookies, imei);
+  let existingUserIds = [];
+  if (existingData) {
+    if (Array.isArray(existingData.users)) {
+      existingUserIds = existingData.users.map(u => String(u.value || u.id || u)).filter(Boolean);
+    } else if (Array.isArray(existingData.user_ids)) {
+      existingUserIds = existingData.user_ids.map(String).filter(Boolean);
+    }
+  }
+
+  const incomingUserIds = Array.isArray(userId)
+    ? userId.map(String).filter(Boolean)
+    : (userId ? [String(userId)] : []);
+
+  const combinedUserIds = Array.from(new Set([...existingUserIds, ...incomingUserIds])).filter(Boolean);
+
+  const finalName = name || (existingData && existingData.name) || 'GPS Tracker';
+  const finalPlate = plateNumber || (existingData && existingData.plate_number) || '';
+  const finalSim = simNumber || (existingData && existingData.sim_number) || '';
+
   const postData = new URLSearchParams({
     cmd: 'edit_object',
-    name: name,
+    name: finalName,
     imei: String(imei),
     new_imei: '',
     model: '',
     vin: '',
-    plate_number: plateNumber || '',
+    plate_number: finalPlate,
     device: '',
-    sim_number: simNumber || '',
+    sim_number: finalSim,
     manager_id: managerId || '',
     active: 'true',
     object_expire: expire ? 'true' : 'false',
     object_expire_dt: expire ? expireDate : '',
-    user_ids: JSON.stringify([String(userId)]),
+    user_ids: JSON.stringify(combinedUserIds),
     vehicle_type_id: ''
   });
   const res = await fetch(`${cleanDomain}/func/fn_cpanel.objects.php`, {
@@ -423,7 +476,11 @@ Example:
 
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
-    const email = (row.email || '').trim().toLowerCase();
+    const rawEmailInput = row.emails || row.email || '';
+    const emailList = Array.isArray(rawEmailInput)
+      ? rawEmailInput.map(e => String(e).trim().toLowerCase()).filter(Boolean)
+      : String(rawEmailInput).split(/[,;]+/).map(e => e.trim().toLowerCase()).filter(Boolean);
+    const emailDisplay = emailList.join(', ');
     const sendCreds = String(row.send_credentials).toLowerCase() === 'true';
     const rawImei = String(row.imei || '').trim();
 
@@ -442,7 +499,7 @@ Example:
     }
     const expireDate = expire ? (rawExpireDate || '2028-01-01') : '';
 
-    console.log(`[${i + 1}/${rows.length}] Processing ${email} -> ${rawImei} (${name || 'NO NAME'}${plateNumber ? ` | ${plateNumber}` : ''})...`);
+    console.log(`[${i + 1}/${rows.length}] Processing [${emailDisplay}] -> ${rawImei} (${name || 'NO NAME'}${plateNumber ? ` | ${plateNumber}` : ''})...`);
 
     if (!name) {
       console.error(`  ✖ FAILED: Missing object_name. Object name is compulsory.\n`);
@@ -456,39 +513,51 @@ Example:
       continue;
     }
 
+    if (emailList.length === 0) {
+      console.error(`  ✖ FAILED: Missing email address.\n`);
+      failCount++;
+      continue;
+    }
+
     try {
       if (isDealer) {
         // Dealer CPanel mode
         let users = await dealerLoadUsers(cleanDomain, session.cookies, session.managerId);
-        let user = findUser(users, email);
+        const resolvedUsers = [];
 
-        if (!user) {
-          console.log(`  └─ Registering user ${email}...`);
-          const regRes = await dealerRegisterUser(cleanDomain, session.cookies, session.managerId, email, sendCreds);
-          if (regRes !== 'OK' && regRes !== 'ERROR_EMAIL_EXISTS') {
-            throw new Error(`Register user failed: ${regRes}`);
+        for (const singleEmail of emailList) {
+          let user = findUser(users, singleEmail);
+          if (!user) {
+            console.log(`  └─ Registering user ${singleEmail}...`);
+            const regRes = await dealerRegisterUser(cleanDomain, session.cookies, session.managerId, singleEmail, sendCreds);
+            if (regRes !== 'OK' && regRes !== 'ERROR_EMAIL_EXISTS') {
+              console.warn(`  ⚠️ Register user ${singleEmail} warning: ${regRes}`);
+            }
+            await new Promise(r => setTimeout(r, 400));
+            users = await dealerLoadUsers(cleanDomain, session.cookies, session.managerId);
+            user = findUser(users, singleEmail);
           }
-          await new Promise(r => setTimeout(r, 400));
-          users = await dealerLoadUsers(cleanDomain, session.cookies, session.managerId);
-          user = findUser(users, email);
+          if (user) resolvedUsers.push(user);
         }
 
-        const userId = user ? user.id : null;
-        console.log(`  └─ Resolved user ID: ${userId || 'NOT FOUND'}`);
+        const userIds = resolvedUsers.map(u => u.id);
+        console.log(`  └─ Resolved user ID(s): [${userIds.join(', ') || 'NONE'}]`);
 
         console.log(`  └─ Registering tracker ${imei} (${name}${plateNumber ? ` | Plate: ${plateNumber}` : ''}${simNumber ? ` | SIM: ${simNumber}` : ''})...`);
-        const addObjRes = await dealerAddObject(cleanDomain, session.cookies, session.managerId, imei, name, expire, expireDate, userId, plateNumber, simNumber);
+        const addObjRes = await dealerAddObject(cleanDomain, session.cookies, session.managerId, imei, name, expire, expireDate, userIds, plateNumber, simNumber);
 
         if (addObjRes !== 'OK' && !addObjRes.includes('EXIST') && !addObjRes.includes('already')) {
           throw new Error(`Add object failed: ${addObjRes}`);
         }
 
-        if (userId) {
-          console.log(`  └─ Assigning vehicle ${imei} to user account ID ${userId}...`);
-          await dealerAssignObject(cleanDomain, session.cookies, userId, imei);
-          await dealerLinkObjectUser(cleanDomain, session.cookies, session.managerId, imei, name, expire, expireDate, userId, plateNumber, simNumber);
+        if (userIds.length > 0) {
+          for (const u of resolvedUsers) {
+            console.log(`  └─ Assigning vehicle ${imei} to user ${u.username} (ID: ${u.id})...`);
+            await dealerAssignObject(cleanDomain, session.cookies, u.id, imei);
+          }
+          await dealerLinkObjectUser(cleanDomain, session.cookies, session.managerId, imei, name, expire, expireDate, userIds, plateNumber, simNumber);
         } else {
-          console.warn(`  ⚠️ Warning: User ID for ${email} could not be resolved. Tracker registered but not linked.`);
+          console.warn(`  ⚠️ Warning: No User IDs could be resolved for ${emailDisplay}. Tracker registered but not linked.`);
         }
 
         console.log(`  ✔ SUCCESS\n`);
@@ -496,20 +565,24 @@ Example:
 
       } else {
         // Server API Key mode
-        const checkRes = await callSpeedotrack(cleanDomain, opts.key, `CHECK_USER_EXISTS,${email}`);
-        const respText = (checkRes.text || '').toLowerCase();
-        const userExists = respText === 'true' || respText === '1' || respText.includes('exist');
+        for (const singleEmail of emailList) {
+          const checkRes = await callSpeedotrack(cleanDomain, opts.key, `CHECK_USER_EXISTS,${singleEmail}`);
+          const respText = (checkRes.text || '').toLowerCase();
+          const userExists = respText === 'true' || respText === '1' || respText.includes('exist');
 
-        if (!userExists) {
-          console.log(`  └─ Creating user ${email}...`);
-          await callSpeedotrack(cleanDomain, opts.key, `ADD_USER,${email},${sendCreds}`);
+          if (!userExists) {
+            console.log(`  └─ Creating user ${singleEmail}...`);
+            await callSpeedotrack(cleanDomain, opts.key, `ADD_USER,${singleEmail},${sendCreds}`);
+          }
         }
 
         console.log(`  └─ Registering tracker ${imei}...`);
         await callSpeedotrack(cleanDomain, opts.key, `ADD_OBJECT,${imei},${name},${expire},${expireDate}`);
 
-        console.log(`  └─ Assigning tracker to user...`);
-        await callSpeedotrack(cleanDomain, opts.key, `ADD_USER_OBJECT,${email},${imei}`);
+        for (const singleEmail of emailList) {
+          console.log(`  └─ Assigning tracker to user ${singleEmail}...`);
+          await callSpeedotrack(cleanDomain, opts.key, `ADD_USER_OBJECT,${singleEmail},${imei}`);
+        }
 
         console.log(`  ✔ SUCCESS\n`);
         successCount++;

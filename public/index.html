@@ -403,8 +403,11 @@
                 </div>
                 <div class="form-grid" style="grid-template-columns: 1.3fr 1fr; gap: 12px; margin-bottom: 14px;">
                   <div class="form-group">
-                    <label for="speedoClientEmailInput">Client Account Email</label>
-                    <input type="email" id="speedoClientEmailInput" placeholder="Leave empty to use Car Tracker email" autocomplete="off">
+                    <label for="speedoClientEmailInput">Client Account Email(s)</label>
+                    <input type="text" id="speedoClientEmailInput" placeholder="e.g. user1@client.com, user2@client.com (or leave empty)" autocomplete="off">
+                    <span class="field-hint" style="font-size: 0.74rem; color: var(--text-dim); margin-top: 4px; display: block;">
+                      💡 Multi-user support: Separate multiple emails with commas. Same vehicles will be shared across all users without unlinking previous accounts. Leave blank to preserve Car Tracker Nigeria assigned users per vehicle.
+                    </span>
                   </div>
                   <div class="form-group">
                     <label for="speedoClientDefaultPassInput">Default Client Password</label>
@@ -497,11 +500,12 @@
                     <th>Vehicle Name</th>
                     <th>Device IMEI</th>
                     <th style="width: 120px;">Plate Number</th>
-                    <th style="width: 100px;">Protocol</th>
-                    <th style="width: 130px;">SIM Number</th>
+                    <th style="width: 150px;">Assigned User(s)</th>
+                    <th style="width: 90px;">Protocol</th>
+                    <th style="width: 120px;">SIM Number</th>
                     <th style="width: 145px;">Expiration Date</th>
-                    <th style="width: 150px;">Last Location Ping</th>
-                    <th>Migration Pipeline State</th>
+                    <th style="width: 140px;">Last Location Ping</th>
+                    <th>Pipeline State</th>
                   </tr>
                 </thead>
                 <tbody id="migTableBody">

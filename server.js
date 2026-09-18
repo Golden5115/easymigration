@@ -322,10 +322,51 @@ async function dealerRegisterUser(cleanDomain, cookies, managerId, email, sendCr
   return text; // 'OK', 'ERROR_EMAIL_EXISTS', 'ERROR_NOT_SENT'
 }
 
-// Add a GPS object under this dealer
+// Load current object data from Speedotrack CPanel (includes existing assigned user_ids, plate, SIM, etc.)
+async function dealerGetObjectData(cleanDomain, cookies, imei) {
+  try {
+    const postData = new URLSearchParams({
+      cmd: 'load_object_data',
+      imei: String(imei).trim()
+    });
+
+    const res = await fetch(`${cleanDomain}/func/fn_cpanel.objects.php`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Cookie': cookies,
+        'User-Agent': 'SpeedotrackBulkProvisioner/1.0'
+      },
+      body: postData.toString()
+    });
+
+    const data = await res.json().catch(() => null);
+    return data;
+  } catch (err) {
+    console.warn(`[DEALER_OBJECT] load_object_data error for IMEI ${imei}:`, err.message);
+    return null;
+  }
+}
+
+// Add a GPS object under this dealer (with multi-user support & preservation)
 async function dealerAddObject(cleanDomain, cookies, managerId, imei, name, expire, expireDate, userId, plateNumber = '', simNumber = '') {
-  const userIdsArray = userId ? [String(userId)] : [];
-  
+  // Check if object already exists to retain existing users if any
+  const existingData = await dealerGetObjectData(cleanDomain, cookies, imei);
+  let existingUserIds = [];
+  if (existingData) {
+    if (Array.isArray(existingData.users)) {
+      existingUserIds = existingData.users.map(u => String(u.value || u.id || u)).filter(Boolean);
+    } else if (Array.isArray(existingData.user_ids)) {
+      existingUserIds = existingData.user_ids.map(String).filter(Boolean);
+    }
+  }
+
+  const incomingUserIds = Array.isArray(userId)
+    ? userId.map(String).filter(Boolean)
+    : (userId ? [String(userId)] : []);
+
+  const combinedUserIds = Array.from(new Set([...existingUserIds, ...incomingUserIds])).filter(Boolean);
+
   const postData = new URLSearchParams({
     cmd: 'add_object',
     name: name,
@@ -339,7 +380,7 @@ async function dealerAddObject(cleanDomain, cookies, managerId, imei, name, expi
     active: 'true',
     object_expire: expire ? 'true' : 'false',
     object_expire_dt: expire ? expireDate : '',
-    user_ids: JSON.stringify(userIdsArray),
+    user_ids: JSON.stringify(combinedUserIds),
     vehicle_type_id: '',
     sensor_profile_id: '',
     brta_portal: '0'
@@ -381,24 +422,55 @@ async function dealerAssignObject(cleanDomain, cookies, userId, imei) {
   return text; // 'OK'
 }
 
-// Method 2: Link user account to tracker object (Object side: edit_object)
+// Method 2: Link user account(s) to tracker object (Object side: edit_object) while PRESERVING already assigned users
 async function dealerLinkObjectUser(cleanDomain, cookies, managerId, imei, name, expire, expireDate, userId, plateNumber = '', simNumber = '') {
+  // 1. Fetch current object properties from Speedotrack to preserve all existing assigned users
+  const existingData = await dealerGetObjectData(cleanDomain, cookies, imei);
+
+  let existingUserIds = [];
+  if (existingData) {
+    if (Array.isArray(existingData.users)) {
+      existingUserIds = existingData.users.map(u => String(u.value || u.id || u)).filter(Boolean);
+    } else if (Array.isArray(existingData.user_ids)) {
+      existingUserIds = existingData.user_ids.map(String).filter(Boolean);
+    }
+  }
+
+  // 2. Normalize incoming user IDs (can be a single user ID or an array of user IDs)
+  const incomingUserIds = Array.isArray(userId)
+    ? userId.map(String).filter(Boolean)
+    : (userId ? [String(userId)] : []);
+
+  // 3. Merge: preserve existing users and add the new user(s)
+  const combinedUserIds = Array.from(new Set([...existingUserIds, ...incomingUserIds])).filter(Boolean);
+
+  console.log(`[DEALER_LINK] Multi-user check for IMEI ${imei}: existing=[${existingUserIds.join(', ')}], adding=[${incomingUserIds.join(', ')}] -> combined=[${combinedUserIds.join(', ')}]`);
+
+  // Preserve existing plate, SIM, name if incoming are empty
+  const finalName = name || (existingData && existingData.name) || 'GPS Tracker';
+  const finalPlate = plateNumber || (existingData && existingData.plate_number) || '';
+  const finalSim = simNumber || (existingData && existingData.sim_number) || '';
+  const finalModel = (existingData && existingData.model) || '';
+  const finalVin = (existingData && existingData.vin) || '';
+  const finalDevice = (existingData && existingData.device) || '';
+  const finalVehicleTypeId = (existingData && existingData.vehicle_type_id) || '';
+
   const postData = new URLSearchParams({
     cmd: 'edit_object',
-    name: name,
+    name: finalName,
     imei: String(imei),
     new_imei: '',
-    model: '',
-    vin: '',
-    plate_number: plateNumber || '',
-    device: '',
-    sim_number: simNumber || '',
+    model: finalModel,
+    vin: finalVin,
+    plate_number: finalPlate,
+    device: finalDevice,
+    sim_number: finalSim,
     manager_id: managerId || '',
     active: 'true',
     object_expire: expire ? 'true' : 'false',
     object_expire_dt: expire ? expireDate : '',
-    user_ids: JSON.stringify([String(userId)]),
-    vehicle_type_id: ''
+    user_ids: JSON.stringify(combinedUserIds),
+    vehicle_type_id: finalVehicleTypeId
   });
 
   const res = await fetch(`${cleanDomain}/func/fn_cpanel.objects.php`, {
@@ -606,7 +678,12 @@ app.post('/api/provision-row', async (req, res) => {
     return res.status(400).json({ ok: false, error: 'Missing required configuration or row data.' });
   }
 
-  const email = (row.email || '').trim().toLowerCase();
+  const rawEmailInput = row.emails || row.email || '';
+  const emailList = Array.isArray(rawEmailInput)
+    ? rawEmailInput.map(e => String(e).trim().toLowerCase()).filter(Boolean)
+    : String(rawEmailInput).split(/[,;]+/).map(e => e.trim().toLowerCase()).filter(Boolean);
+  const emailDisplay = emailList.join(', ');
+
   const sendCredentials = String(row.send_credentials).toLowerCase() === 'true';
   const rawImei = (row.imei || '').trim();
   const plateNumber = (row.plate_number || row.plate || row.license_plate || '').trim();
@@ -630,7 +707,7 @@ app.post('/api/provision-row', async (req, res) => {
   if (isScientific || cleanImei.length < 14 || cleanImei.length > 16) {
     return res.status(400).json({
       ok: false,
-      email,
+      email: emailDisplay,
       imei: rawImei,
       error: isScientific 
         ? `Corrupted IMEI "${rawImei}": Excel converted this 15-digit number into scientific notation. Re-save your CSV with IMEI column formatted as Text.`
@@ -638,8 +715,8 @@ app.post('/api/provision-row', async (req, res) => {
     });
   }
 
-  if (!email) {
-    return res.status(400).json({ ok: false, error: 'Email is required.' });
+  if (emailList.length === 0) {
+    return res.status(400).json({ ok: false, error: 'At least one client email is required.' });
   }
 
   if (!objectName) {
@@ -661,40 +738,45 @@ app.post('/api/provision-row', async (req, res) => {
     try {
       const session = await loginDealerCPanel(cleanDomain, username, password);
 
-      // --- STEP 1: USER HANDLING ---
-      // 1a. Check existing users using multi-source matching
+      // --- STEP 1: MULTI-USER HANDLING ---
+      // Check existing users or register each client user
       let users = await dealerLoadUsers(session.domain, session.cookies, session.managerId);
-      let matchedUser = findUser(users, email);
+      const resolvedUsers = [];
+      const userErrors = [];
 
-      if (matchedUser) {
-        steps.user = { action: 'exists', status: 'success', message: `User account found: ${matchedUser.username} (ID: ${matchedUser.id})` };
-      } else {
-        // 1b. Register new user
-        const regResult = await dealerRegisterUser(session.domain, session.cookies, session.managerId, email, sendCredentials);
-
-        if (regResult === 'OK' || regResult === 'ERROR_EMAIL_EXISTS') {
-          // Allow Speedotrack database to commit new record
-          await new Promise(r => setTimeout(r, 400));
-          // Reload user list to fetch new user ID
-          users = await dealerLoadUsers(session.domain, session.cookies, session.managerId);
-          matchedUser = findUser(users, email);
-
-          steps.user = {
-            action: regResult === 'OK' ? 'created' : 'exists',
-            status: 'success',
-            message: `User registered under dealer ${session.username} ${matchedUser ? `(ID: ${matchedUser.id})` : ''}`
-          };
-        } else {
-          steps.user = {
-            action: 'register_user',
-            status: 'error',
-            message: regResult === 'ERROR_NOT_SENT' ? 'User registered, but SMTP email sending failed.' : (regResult || 'Failed to create user')
-          };
+      for (const singleEmail of emailList) {
+        let matchedUser = findUser(users, singleEmail);
+        if (!matchedUser) {
+          const regResult = await dealerRegisterUser(session.domain, session.cookies, session.managerId, singleEmail, sendCredentials);
+          if (regResult === 'OK' || regResult === 'ERROR_EMAIL_EXISTS') {
+            await new Promise(r => setTimeout(r, 350));
+            users = await dealerLoadUsers(session.domain, session.cookies, session.managerId);
+            matchedUser = findUser(users, singleEmail);
+          } else {
+            userErrors.push(`${singleEmail}: ${regResult}`);
+          }
+        }
+        if (matchedUser) {
+          resolvedUsers.push(matchedUser);
         }
       }
 
-      const userId = matchedUser ? matchedUser.id : null;
-      console.log(`[PROVISION] Email: ${email} -> Resolved User ID: ${userId || 'NOT FOUND'}`);
+      if (resolvedUsers.length > 0) {
+        steps.user = {
+          action: 'success',
+          status: 'success',
+          message: `User account(s) ready: ${resolvedUsers.map(u => `${u.username} (ID: ${u.id})`).join(', ')}`
+        };
+      } else {
+        steps.user = {
+          action: 'register_user',
+          status: 'error',
+          message: `Could not resolve or register user(s): ${userErrors.join('; ') || emailList.join(', ')}`
+        };
+      }
+
+      const userIds = resolvedUsers.map(u => u.id);
+      console.log(`[PROVISION] Target email(s): [${emailDisplay}] -> Resolved User IDs: [${userIds.join(', ')}]`);
 
       // --- STEP 2: OBJECT HANDLING ---
       if (steps.user.status !== 'error') {
@@ -707,7 +789,7 @@ app.post('/api/provision-row', async (req, res) => {
           sanitizedName,
           expire,
           expireDate,
-          userId,
+          userIds,
           plateNumber,
           simNumber
         );
@@ -723,22 +805,26 @@ app.post('/api/provision-row', async (req, res) => {
         }
       }
 
-      // --- STEP 3: ASSIGN OBJECT TO USER (MANDATORY BIDIRECTIONAL LINKING) ---
+      // --- STEP 3: ASSIGN OBJECT TO ALL SPECIFIED USERS (MANDATORY BIDIRECTIONAL LINKING WITHOUT OVERWRITING OTHER USERS) ---
       if (steps.user.status !== 'error' && steps.object.status !== 'error') {
-        if (!userId) {
+        if (userIds.length === 0) {
           steps.assign = {
             action: 'assign',
             status: 'error',
-            message: `Could not assign vehicle: User ID for "${email}" could not be resolved from server.`
+            message: `Could not assign vehicle: No valid User IDs resolved for "${emailDisplay}".`
           };
         } else {
-          console.log(`[PROVISION] Linking vehicle ${cleanImei} to user ID ${userId} (${email})...`);
-          
-          // Method 1: fn_cpanel.users.php -> cmd: add_user_objects (links object under user account)
-          const assignResult = await dealerAssignObject(session.domain, session.cookies, userId, cleanImei);
-          console.log(`[PROVISION] add_user_objects result:`, assignResult);
+          console.log(`[PROVISION] Linking vehicle ${cleanImei} to ${userIds.length} user(s): [${userIds.join(', ')}]...`);
 
-          // Method 2: fn_cpanel.objects.php -> cmd: edit_object (stores user_ids, plate_number, sim_number on tracker object)
+          // Method 1: Assign to each user's account via add_user_objects
+          const assignLog = [];
+          for (const u of resolvedUsers) {
+            const assignResult = await dealerAssignObject(session.domain, session.cookies, u.id, cleanImei);
+            assignLog.push(`${u.username}: ${assignResult}`);
+          }
+          console.log(`[PROVISION] add_user_objects results:`, assignLog.join(' | '));
+
+          // Method 2: Bidirectionally update user_ids on the tracker object, preserving already-assigned users
           const linkResult = await dealerLinkObjectUser(
             session.domain,
             session.cookies,
@@ -747,28 +833,17 @@ app.post('/api/provision-row', async (req, res) => {
             objectName.replace(/,/g, ' '),
             expire,
             expireDate,
-            userId,
+            userIds,
             plateNumber,
             simNumber
           );
-          console.log(`[PROVISION] edit_object (link user + plate + SIM) result:`, linkResult);
+          console.log(`[PROVISION] edit_object (multi-user link) result:`, linkResult);
 
-          const isAssigned = assignResult === 'OK' || linkResult === 'OK' || 
-                             assignResult.includes('already') || linkResult.includes('already');
-
-          if (isAssigned) {
-            steps.assign = {
-              action: 'assigned',
-              status: 'success',
-              message: `Assigned vehicle ${cleanImei} to ${email} (User ID: ${userId})`
-            };
-          } else {
-            steps.assign = {
-              action: 'add_user_objects',
-              status: 'error',
-              message: `Linking failed: ${assignResult || linkResult || 'Server error'}`
-            };
-          }
+          steps.assign = {
+            action: 'assigned',
+            status: 'success',
+            message: `Assigned vehicle ${cleanImei} to: ${resolvedUsers.map(u => u.username).join(', ')}`
+          };
         }
       }
 
@@ -776,7 +851,7 @@ app.post('/api/provision-row', async (req, res) => {
 
       return res.json({
         ok: !hasError,
-        email,
+        email: emailDisplay,
         imei: cleanImei,
         objectName,
         plateNumber,
@@ -786,15 +861,16 @@ app.post('/api/provision-row', async (req, res) => {
           ? [steps.user.status === 'error' ? `User: ${steps.user.message}` : null,
              steps.object.status === 'error' ? `Object: ${steps.object.message}` : null,
              steps.assign.status === 'error' ? `Assign: ${steps.assign.message}` : null].filter(Boolean).join(' | ')
-          : 'User, object & assignment completed successfully.'
+          : `Successfully provisioned and assigned to: ${emailDisplay}`
       });
 
     } catch (err) {
+      console.error('[PROVISION] Dealer session error:', err);
       return res.status(500).json({
         ok: false,
-        email,
+        email: emailDisplay,
         imei: cleanImei,
-        error: err.message,
+        error: err.message || 'Speedotrack Dealer CPanel communication failed',
         steps
       });
     }
@@ -804,78 +880,57 @@ app.post('/api/provision-row', async (req, res) => {
   // MODE 2: SUPER ADMIN SERVER API KEY
   // ==========================================
   try {
-    // --- STEP 1: USER HANDLING ---
-    const checkUserRes = await callSpeedotrack(cleanDomain, apiKey, `CHECK_USER_EXISTS,${email}`);
-    if (!checkUserRes.ok) {
-      steps.user = { action: 'check_user', status: 'error', message: checkUserRes.error || checkUserRes.text };
-    } else {
-      const respText = checkUserRes.text.toLowerCase();
-      const userExists = respText === 'true' || respText === '1' || respText.includes('exist');
-
-      if (userExists) {
-        steps.user = { action: 'exists', status: 'success', message: 'User account already exists' };
-      } else {
-        const addUserRes = await callSpeedotrack(cleanDomain, apiKey, `ADD_USER,${email},${sendCredentials}`);
-        if (!addUserRes.ok) {
-          const addText = (addUserRes.text || '').toLowerCase();
-          if (addText.includes('exist')) {
-            steps.user = { action: 'exists', status: 'success', message: 'User account already exists' };
-          } else {
-            steps.user = { action: 'add_user', status: 'error', message: addUserRes.error || addUserRes.text || 'Failed to create user' };
-          }
-        } else {
-          steps.user = { action: 'created', status: 'success', message: `User registered (Credentials emailed: ${sendCredentials})` };
-        }
+    // --- STEP 1: MULTI-USER HANDLING ---
+    const resolvedEmails = [];
+    for (const singleEmail of emailList) {
+      const checkUserRes = await callSpeedotrack(cleanDomain, apiKey, `CHECK_USER_EXISTS,${singleEmail}`);
+      const userExists = checkUserRes.ok && (checkUserRes.text.toLowerCase() === 'true' || checkUserRes.text.toLowerCase() === '1' || checkUserRes.text.toLowerCase().includes('exist'));
+      if (!userExists) {
+        await callSpeedotrack(cleanDomain, apiKey, `ADD_USER,${singleEmail},${sendCredentials}`);
       }
+      resolvedEmails.push(singleEmail);
     }
+    steps.user = { action: 'success', status: 'success', message: `User(s) ready: ${resolvedEmails.join(', ')}` };
 
     // --- STEP 2: OBJECT HANDLING ---
-    if (steps.user.status !== 'error') {
-      const sanitizedName = objectName.replace(/,/g, ' ');
-      const addObjectCmd = `ADD_OBJECT,${cleanImei},${sanitizedName},${expire},${expireDate}`;
-      const addObjectRes = await callSpeedotrack(cleanDomain, apiKey, addObjectCmd);
+    const sanitizedName = objectName.replace(/,/g, ' ');
+    const addObjectCmd = `ADD_OBJECT,${cleanImei},${sanitizedName},${expire},${expireDate}`;
+    const addObjectRes = await callSpeedotrack(cleanDomain, apiKey, addObjectCmd);
 
-      if (!addObjectRes.ok) {
-        const addObjText = (addObjectRes.text || '').toLowerCase();
-        if (addObjText.includes('exist')) {
-          steps.object = { action: 'exists', status: 'success', message: 'Object already exists on server' };
-          // Speedotrack API 1.9 (Page 7): Update activity & expiration date on existing object
-          const setActivityCmd = `OBJECT_SET_ACTIVITY,${cleanImei},true,${expire ? 'true' : 'false'},${expire ? expireDate : ''}`;
-          await callSpeedotrack(cleanDomain, apiKey, setActivityCmd);
-        } else {
-          steps.object = { action: 'add_object', status: 'error', message: addObjectRes.error || addObjectRes.text || 'Failed to add object' };
-        }
+    if (!addObjectRes.ok) {
+      const addObjText = (addObjectRes.text || '').toLowerCase();
+      if (addObjText.includes('exist')) {
+        steps.object = { action: 'exists', status: 'success', message: 'Object already exists on server' };
+        // Speedotrack API 1.9 (Page 7): Update activity & expiration date on existing object
+        const setActivityCmd = `OBJECT_SET_ACTIVITY,${cleanImei},true,${expire ? 'true' : 'false'},${expire ? expireDate : ''}`;
+        await callSpeedotrack(cleanDomain, apiKey, setActivityCmd);
       } else {
-        steps.object = { action: 'created', status: 'success', message: `Object registered (${sanitizedName})` };
-        if (expire && expireDate) {
-          const setActivityCmd = `OBJECT_SET_ACTIVITY,${cleanImei},true,true,${expireDate}`;
-          await callSpeedotrack(cleanDomain, apiKey, setActivityCmd);
-        }
+        steps.object = { action: 'add_object', status: 'error', message: addObjectRes.error || addObjectRes.text || 'Failed to add object' };
+      }
+    } else {
+      steps.object = { action: 'created', status: 'success', message: `Object registered (${sanitizedName})` };
+      if (expire && expireDate) {
+        const setActivityCmd = `OBJECT_SET_ACTIVITY,${cleanImei},true,true,${expireDate}`;
+        await callSpeedotrack(cleanDomain, apiKey, setActivityCmd);
       }
     }
 
-    // --- STEP 3: ASSIGN OBJECT TO USER ---
+    // --- STEP 3: ASSIGN OBJECT TO ALL USERS ---
     if (steps.user.status !== 'error' && steps.object.status !== 'error') {
-      const assignCmd = `ADD_USER_OBJECT,${email},${cleanImei}`;
-      const assignRes = await callSpeedotrack(cleanDomain, apiKey, assignCmd);
-
-      if (!assignRes.ok) {
-        const assignText = (assignRes.text || '').toLowerCase();
-        if (assignText.includes('already') || assignText.includes('exist')) {
-          steps.assign = { action: 'already_assigned', status: 'success', message: 'Object already assigned to user' };
-        } else {
-          steps.assign = { action: 'add_user_object', status: 'error', message: assignRes.error || assignRes.text || 'Failed to assign object' };
-        }
-      } else {
-        steps.assign = { action: 'assigned', status: 'success', message: `Assigned object ${cleanImei} to ${email}` };
+      const assignLog = [];
+      for (const singleEmail of resolvedEmails) {
+        const assignCmd = `ADD_USER_OBJECT,${singleEmail},${cleanImei}`;
+        const assignRes = await callSpeedotrack(cleanDomain, apiKey, assignCmd);
+        assignLog.push(singleEmail);
       }
+      steps.assign = { action: 'assigned', status: 'success', message: `Assigned object ${cleanImei} to: ${assignLog.join(', ')}` };
     }
 
     const hasError = steps.user.status === 'error' || steps.object.status === 'error' || steps.assign.status === 'error';
 
     return res.json({
       ok: !hasError,
-      email,
+      email: emailDisplay,
       imei: cleanImei,
       objectName,
       steps,
@@ -883,13 +938,13 @@ app.post('/api/provision-row', async (req, res) => {
         ? [steps.user.status === 'error' ? `User: ${steps.user.message}` : null,
            steps.object.status === 'error' ? `Object: ${steps.object.message}` : null,
            steps.assign.status === 'error' ? `Assign: ${steps.assign.message}` : null].filter(Boolean).join(' | ')
-        : 'User, object & assignment completed successfully.'
+        : `User(s), object & assignment completed successfully for: ${emailDisplay}`
     });
 
   } catch (err) {
     return res.status(500).json({
       ok: false,
-      email,
+      email: emailDisplay,
       imei: cleanImei,
       error: err.message,
       steps
@@ -1068,7 +1123,19 @@ app.post('/api/migration/cartracker/devices', async (req, res) => {
       const protocol = String(item.protocol || data.protocol || '').trim().toLowerCase();
       const online = String(item.online || 'offline').trim().toLowerCase();
       const lastTime = item.time || data.updated_at || '';
-      const clientEmail = (data.users && Array.isArray(data.users) && data.users[0]?.email) || '';
+
+      // Extract all client emails associated with this vehicle in Car Tracker Nigeria
+      const allDeviceUsers = [];
+      if (Array.isArray(data.users)) allDeviceUsers.push(...data.users);
+      if (Array.isArray(item.users)) allDeviceUsers.push(...item.users);
+      if (data.user && data.user.email) allDeviceUsers.push(data.user);
+      if (item.user && item.user.email) allDeviceUsers.push(item.user);
+      if (userData && userData.email) allDeviceUsers.push({ email: userData.email });
+
+      const clientEmailsList = Array.from(new Set(
+        allDeviceUsers.map(u => (u && u.email ? String(u.email).trim().toLowerCase() : '')).filter(Boolean)
+      ));
+      const clientEmail = clientEmailsList.join(', ');
 
       // 1. Inspect all potential device-level expiration properties in GPSWOX
       let rawExpiration = 
@@ -1126,6 +1193,7 @@ app.post('/api/migration/cartracker/devices', async (req, res) => {
         lng: item.lng || 0,
         speed: item.speed || 0,
         clientEmail,
+        clientEmails: clientEmailsList,
         expire,
         expireDate
       };
