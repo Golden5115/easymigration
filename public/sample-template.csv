@@ -1,0 +1,8 @@
+email,send_credentials,imei,object_name,plate_number,sim_number,expire_date
+fleet.manager@transportco.com,true,868204051000001,Delivery Van 01,APP-102XY,+2348012345601,2027-12-31
+fleet.manager@transportco.com,false,868204051000002,Delivery Van 02,KJA-455BC,+2348012345602,2027-12-31
+fleet.manager@transportco.com,false,868204051000003,Heavy Truck 01,ABJ-891LK,+2348012345603,
+driver.john@example.com,true,868204052000001,Toyota Hilux - Lagos,EKY-311TR,+2348012345604,2027-12-31
+driver.mary@example.com,true,868204053000001,Ford Transit - Abuja,RBC-789QA,+2348012345605,
+logistics@globalhaulage.com,true,868204054000001,Volvo FH16 Semi-Truck,AAA-555ZU,+2348012345606,2026-12-31
+logistics@globalhaulage.com,false,868204054000002,Mercedes Actros Hauler,KTU-882MN,+2348012345607,2026-12-31

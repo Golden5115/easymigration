@@ -1,0 +1,4 @@
+email,send_credentials,imei,object_name,plate_number,sim_number,expire_date
+testing@gmail.com,false,358657103515339,Toyota Camry,KJA-124AA,+2348011112222,2026-02-27
+testing@gmail.com,false,357445100957188,Mercedes Benz GLE 450,EKY-982BB,+2348033334444,2026-02-10
+testing@gmail.com,false,863844052477095,TOYOTA COROLLA,ABJ-456CC,+2348055556666,2027-12-31

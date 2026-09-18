@@ -1,0 +1,781 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Speedotrack Bulk Provisioner | Users & Trackers Automation</title>
+  <meta name="description" content="Enterprise bulk import and tracker assignment tool for Speedotrack HTTP API 1.9">
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-layout">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="header-brand">
+        <div class="brand-icon">
+          <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2z"></path>
+            <path d="M12 6a6 6 0 1 0 6 6 6 6 0 0 0-6-6z"></path>
+            <circle cx="12" cy="12" r="2"></circle>
+          </svg>
+        </div>
+        <div>
+          <h1 class="brand-title">Speedotrack <span class="accent-text">Bulk Provisioner</span></h1>
+          <p class="brand-subtitle">Automated User Onboarding & GPS Object Assignment • HTTP API 1.9</p>
+        </div>
+      </div>
+      <div class="header-status">
+        <div id="connectionStatusBadge" class="status-pill status-untested">
+          <span class="status-dot"></span>
+          <span id="connectionStatusText">Server Untested</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Mode Switcher Navigation -->
+    <div class="mode-navigation-bar">
+      <button type="button" class="mode-nav-btn active" id="modeProvisionBtn">
+        <span class="mode-icon">📄</span>
+        <span>CSV &amp; Excel Bulk Provisioner</span>
+      </button>
+      <button type="button" class="mode-nav-btn" id="modeMigrateBtn">
+        <span class="mode-icon">🔄</span>
+        <span>Car Tracker Nigeria &rarr; Speedotrack Migration</span>
+        <span class="badge-pulse">Accounts &amp; Objects</span>
+      </button>
+      <button type="button" class="mode-nav-btn" id="modeRepointBtn">
+        <span class="mode-icon">📡</span>
+        <span>Vehicle Repointing &amp; OTA Cutover</span>
+        <span class="badge-pulse" style="background: rgba(6, 182, 212, 0.2); color: #38bdf8; border-color: rgba(6, 182, 212, 0.4);">server.cartracker.com.ng</span>
+      </button>
+    </div>
+
+    <main class="app-main">
+      <!-- VIEW 1: CSV & EXCEL BULK PROVISIONER -->
+      <div id="provisionerView">
+        <!-- Section 1: Server Config -->
+        <section class="card config-card" id="configSection">
+        <div class="card-header">
+          <div class="card-title-group">
+            <span class="step-badge">1</span>
+            <h2>Speedotrack Authentication</h2>
+          </div>
+          <span class="info-note" id="authModeNote">Recommended for <strong>Dealer-SM</strong> accounts like <code>cartrack</code></span>
+        </div>
+        <div class="card-body">
+          <!-- Auth Mode Tabs -->
+          <div class="tabs-nav" style="margin-bottom: 18px;">
+            <button type="button" class="tab-btn active" id="tabDealerModeBtn">🏢 Dealer CPanel Login (Recommended)</button>
+            <button type="button" class="tab-btn" id="tabServerKeyBtn">🔑 Super Admin Server API Key</button>
+          </div>
+
+          <!-- Common Domain & Pacing -->
+          <div class="form-grid" style="grid-template-columns: 1.5fr 1fr; margin-bottom: 16px;">
+            <div class="form-group">
+              <label for="serverDomainInput">Speedotrack Server Domain / Base URL</label>
+              <div class="input-wrapper">
+                <input type="text" id="serverDomainInput" placeholder="https://server.cartracker.com.ng/ or https://gps.yourserver.com" autocomplete="off" spellcheck="false">
+              </div>
+              <span class="field-hint" id="domainHint">Base server URL only (e.g. <code>https://server.cartracker.com.ng/</code>). Do not include <code>/cpanel.php</code></span>
+            </div>
+            <div class="form-group config-options">
+              <label for="pacingSelect">Request Pacing (Rate Limit Guard)</label>
+              <select id="pacingSelect">
+                <option value="150">150 ms (Fast)</option>
+                <option value="250" selected>250 ms (Balanced - Recommended)</option>
+                <option value="500">500 ms (Gentle)</option>
+                <option value="1000">1000 ms (Strict)</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Dealer Login Panel -->
+          <div id="dealerAuthPanel" class="form-grid" style="grid-template-columns: 1fr 1fr; margin-bottom: 16px;">
+            <div class="form-group">
+              <label for="dealerUsernameInput">CPanel Dealer Username</label>
+              <div class="input-wrapper">
+                <input type="text" id="dealerUsernameInput" placeholder="e.g. cartrack" autocomplete="username" spellcheck="false">
+              </div>
+              <span class="field-hint">Your CPanel login username</span>
+            </div>
+            <div class="form-group">
+              <label for="dealerPasswordInput">CPanel Dealer Password</label>
+              <div class="input-wrapper">
+                <input type="password" id="dealerPasswordInput" placeholder="Your CPanel login password" autocomplete="current-password" spellcheck="false">
+                <button type="button" id="togglePasswordVisibilityBtn" class="btn-icon" title="Toggle visibility">👁️</button>
+              </div>
+              <span class="field-hint">Stored safely in local browser memory</span>
+            </div>
+          </div>
+
+          <!-- Server API Key Panel (Hidden by default) -->
+          <div id="serverKeyAuthPanel" class="form-grid hidden" style="grid-template-columns: 1fr; margin-bottom: 16px;">
+            <div class="form-group">
+              <label for="apiKeyInput">Super Administrator Server API Key</label>
+              <div class="input-wrapper">
+                <input type="password" id="apiKeyInput" placeholder="Paste Super Admin key from Manage Server" autocomplete="off" spellcheck="false">
+                <button type="button" id="toggleKeyVisibilityBtn" class="btn-icon" title="Toggle visibility">👁️</button>
+              </div>
+              <span class="field-hint">Requires root admin key from Super Administrator &gt; Manage Server</span>
+            </div>
+          </div>
+
+          <div class="config-actions">
+            <label class="checkbox-label">
+              <input type="checkbox" id="rememberCredsCheckbox" checked>
+              <span>Remember login &amp; domain locally</span>
+            </label>
+            <button id="testConnectionBtn" class="btn btn-secondary">
+              <span class="btn-spinner hidden" id="testSpinner"></span>
+              <span id="testBtnText">⚡ Test Dealer Connection</span>
+            </button>
+          </div>
+          <div id="testResultAlert" class="alert hidden"></div>
+        </div>
+      </section>
+
+      <!-- Section 2: Data Ingestion -->
+      <section class="card ingestion-card" id="ingestionSection">
+        <div class="card-header">
+          <div class="card-title-group">
+            <span class="step-badge">2</span>
+            <h2>Import Users & Objects</h2>
+          </div>
+          <div class="header-actions">
+            <a href="sample-template.csv" download="speedotrack-sample-template.csv" class="btn btn-sm btn-outline" id="downloadTemplateBtn">
+              📥 Download Sample CSV
+            </a>
+            <button type="button" id="loadDemoBtn" class="btn btn-sm btn-outline">
+              🪄 Load Sample Test Data
+            </button>
+            <button type="button" id="loadPdfDataBtn" class="btn btn-sm btn-outline" style="border-color: rgba(6, 182, 212, 0.4); color: var(--primary);">
+              📑 Load PDF Test Objects (3)
+            </button>
+          </div>
+        </div>
+        <div class="card-body">
+          <!-- Ingestion Mode Tabs -->
+          <div class="tabs-nav">
+            <button class="tab-btn active" data-tab="csvTab" id="tabCsvBtn">📁 Upload CSV File</button>
+            <button class="tab-btn" data-tab="pasteTab" id="tabPasteBtn">📋 Paste from Excel / Sheets</button>
+          </div>
+
+          <!-- CSV Tab -->
+          <div class="tab-content active" id="csvTab">
+            <div class="dropzone" id="csvDropzone">
+              <input type="file" id="csvFileInput" accept=".csv,text/csv,text/plain" class="file-input-hidden">
+              <div class="dropzone-inner">
+                <div class="dropzone-icon">📄</div>
+                <p class="dropzone-main-text">Drag & drop your <strong>.csv</strong> file here, or <span class="browse-link">browse</span></p>
+                <p class="dropzone-sub-text">Columns: <code>email</code>, <code>send_credentials</code>, <code>imei</code>, <code>object_name</code>, <code>plate_number</code>, <code>sim_number</code>, <code>expire_date</code> <em>(optional)</em></p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Paste Tab -->
+          <div class="tab-content" id="pasteTab">
+            <div class="paste-area-wrapper">
+              <textarea id="pasteTextarea" rows="5" placeholder="Copy rows from Excel or Google Sheets and paste them here...&#10;Format: email [tab] send_credentials [tab] imei [tab] object_name [tab] plate_number [tab] sim_number [tab] expire_date (optional)"></textarea>
+              <div class="paste-actions">
+                <button type="button" id="processPastedBtn" class="btn btn-secondary">Parse &amp; Load Pasted Rows</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Section 3: Data Review & Pre-Flight Validation Grid -->
+      <section class="card review-card hidden" id="reviewSection">
+        <div class="card-header">
+          <div class="card-title-group">
+            <span class="step-badge">3</span>
+            <h2>Pre-Flight Validation &amp; Review Grid</h2>
+          </div>
+          <div class="table-stats-bar">
+            <div class="stat-item"><span class="stat-num" id="totalRowsCount">0</span> Total Records</div>
+            <div class="stat-item"><span class="stat-num" id="uniqueUsersCount">0</span> Unique Users</div>
+            <div class="stat-item"><span class="stat-num" id="uniqueImeisCount">0</span> Devices</div>
+            <div class="stat-item stat-warning hidden" id="validationErrorsBox">
+              ⚠️ <span id="validationErrorsCount">0</span> Validation Warnings
+            </div>
+          </div>
+          <div class="header-actions">
+            <button type="button" id="clearDataBtn" class="btn btn-sm btn-danger-outline">Clear All</button>
+          </div>
+        </div>
+
+        <div class="card-body">
+          <!-- Excel Scientific Notation Alert Box -->
+          <div id="excelWarningBox" class="alert alert-error hidden" style="margin-bottom: 16px;">
+            <strong>⚠️ CRITICAL: Excel Scientific Notation Corruption Detected</strong>
+            <p style="margin-top: 4px; font-size: 0.82rem;">
+              One or more tracker IMEIs were converted into scientific notation (e.g. <code>359E14</code> or <code>3.59E+14</code>) when saved in Microsoft Excel. The original 15-digit numbers were permanently truncated by Excel and cannot be provisioned.
+            </p>
+            <p style="margin-top: 4px; font-size: 0.82rem;">
+              <strong>How to fix:</strong> In Excel, format the IMEI column as <strong>Text</strong> before entering or pasting digits, or use <code>sample-template.csv</code> / click <strong>Load PDF Test Objects</strong>.
+            </p>
+          </div>
+
+          <div class="table-container">
+            <table class="data-table" id="reviewTable">
+              <thead>
+                <tr>
+                  <th style="width: 40px;">#</th>
+                  <th style="width: 100px;">Status</th>
+                  <th>User Email <span style="color: #f87171;" title="Compulsory">*</span></th>
+                  <th style="width: 90px;">Send Pass</th>
+                  <th>Device IMEI <span style="color: #f87171;" title="Compulsory">*</span></th>
+                  <th>Object Name <span style="color: #f87171;" title="Compulsory">*</span></th>
+                  <th style="width: 120px;">Plate Number</th>
+                  <th style="width: 130px;">SIM Number</th>
+                  <th style="width: 110px;">Expire Date</th>
+                  <th>API Progress / Response</th>
+                  <th style="width: 50px;">Action</th>
+                </tr>
+              </thead>
+              <tbody id="tableBody">
+                <!-- Rows injected dynamically by app.js -->
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Execution Control Bar -->
+          <div class="execution-panel" id="executionPanel">
+            <div class="execution-controls">
+              <button id="startProvisioningBtn" class="btn btn-primary btn-lg">
+                🚀 Start Bulk Provisioning
+              </button>
+              <button id="pauseResumeBtn" class="btn btn-secondary btn-lg hidden">
+                ⏸️ Pause
+              </button>
+              <button id="stopBtn" class="btn btn-danger-outline btn-lg hidden">
+                ⏹️ Cancel
+              </button>
+              <button id="retryFailedBtn" class="btn btn-warning-outline btn-lg hidden">
+                🔄 Retry Failed Rows (<span id="failedRetryCount">0</span>)
+              </button>
+            </div>
+
+            <!-- Progress Indicator -->
+            <div class="progress-wrapper hidden" id="progressWrapper">
+              <div class="progress-meta">
+                <span class="progress-title" id="progressStatusText">Provisioning in progress...</span>
+                <span class="progress-percent" id="progressPercent">0%</span>
+              </div>
+              <div class="progress-bar-bg">
+                <div class="progress-bar-fill" id="progressBarFill" style="width: 0%"></div>
+              </div>
+              <div class="progress-breakdown">
+                <span class="breakdown-tag tag-success">✔ Success: <strong id="countSuccess">0</strong></span>
+                <span class="breakdown-tag tag-failed">✖ Failed: <strong id="countFailed">0</strong></span>
+                <span class="breakdown-tag tag-remaining">⏳ Remaining: <strong id="countRemaining">0</strong></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Section 4: Live Execution Terminal Log -->
+      <section class="card log-card hidden" id="logSection">
+        <div class="card-header">
+          <div class="card-title-group">
+            <span class="terminal-dot red"></span>
+            <span class="terminal-dot yellow"></span>
+            <span class="terminal-dot green"></span>
+            <h2 class="terminal-title">Live Speedotrack API Log</h2>
+          </div>
+          <div class="terminal-actions">
+            <label class="checkbox-label log-checkbox">
+              <input type="checkbox" id="autoscrollCheckbox" checked>
+              <span>Auto-scroll</span>
+            </label>
+            <button id="copyLogsBtn" class="btn btn-sm btn-ghost">📋 Copy Logs</button>
+            <button id="clearLogsBtn" class="btn btn-sm btn-ghost">Clear</button>
+          </div>
+        </div>
+        <div class="card-body log-body">
+          <div class="terminal-stream" id="terminalStream">
+            <div class="log-line log-system">[Ready] Awaiting connection and data to execute Speedotrack provisioning.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Section 5: Completion & Export -->
+      <section class="card export-card hidden" id="exportSection">
+        <div class="card-header">
+          <div class="card-title-group">
+            <span class="step-badge">✔</span>
+            <h2>Provisioning Finished &amp; Reports</h2>
+          </div>
+        </div>
+        <div class="card-body export-body">
+          <p id="exportSummaryText">All records have been processed through the Speedotrack HTTP API.</p>
+          <div class="export-actions">
+            <button id="exportAllCsvBtn" class="btn btn-primary">
+              📥 Export Full Execution Report (CSV)
+            </button>
+            <button id="exportFailedCsvBtn" class="btn btn-secondary hidden">
+              ⚠️ Export Failed Rows Only (CSV)
+            </button>
+          </div>
+        </div>
+      </div>
+      <!-- /provisionerView -->
+
+      <!-- VIEW 2: CAR TRACKER NIGERIA TO SPEEDOTRACK LIVE MIGRATION -->
+      <div id="migrationView" class="hidden">
+        <!-- Migration Config Card -->
+        <section class="card config-card" id="migrationConfigSection">
+          <div class="card-header">
+            <div class="card-title-group">
+              <span class="step-badge">1</span>
+              <h2>Migration Platforms &amp; Repoint Configuration</h2>
+            </div>
+            <span class="info-note">Source: <strong>Car Tracker Nigeria (GPSWOX)</strong> &rarr; Target: <strong>Speedotrack</strong></span>
+          </div>
+          <div class="card-body">
+            <div class="form-grid" style="grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 20px;">
+              <!-- Source: Car Tracker Nigeria -->
+              <div class="platform-box">
+                <div class="platform-box-header">
+                  <span class="platform-tag source-tag">SOURCE PLATFORM</span>
+                  <h3>Car Tracker Nigeria (GPSWOX)</h3>
+                </div>
+                <div class="form-group" style="margin-bottom: 12px;">
+                  <label for="ctServerUrlInput">Car Tracker Nigeria API URL</label>
+                  <input type="text" id="ctServerUrlInput" value="https://app.cartracker.com.ng" autocomplete="off" spellcheck="false">
+                </div>
+                <div class="form-grid" style="grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
+                  <div class="form-group">
+                    <label for="ctEmailInput">Account Email</label>
+                    <input type="email" id="ctEmailInput" placeholder="your-email@cartracker.com.ng" autocomplete="username">
+                  </div>
+                  <div class="form-group">
+                    <label for="ctPasswordInput">Password</label>
+                    <div class="input-wrapper">
+                      <input type="password" id="ctPasswordInput" placeholder="Account password" autocomplete="current-password">
+                      <button type="button" id="toggleCtPasswordBtn" class="btn-icon" title="Toggle visibility">👁️</button>
+                    </div>
+                  </div>
+                </div>
+                <div class="form-group" style="margin-bottom: 14px;">
+                  <label for="ctApiHashInput">Or User API Hash <span class="text-dim">(Optional shortcut)</span></label>
+                  <input type="text" id="ctApiHashInput" placeholder="$2y$10$..." autocomplete="off" spellcheck="false">
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                  <button type="button" id="ctConnectBtn" class="btn btn-secondary">
+                    <span class="btn-spinner hidden" id="ctConnectSpinner"></span>
+                    <span id="ctConnectBtnText">⚡ Connect &amp; Fetch Live Fleet</span>
+                  </button>
+                  <div id="ctStatusBadge" class="status-pill status-untested">
+                    <span class="status-dot"></span>
+                    <span id="ctStatusText">Not Connected</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Target: Speedotrack Dealer & Client Destination -->
+              <div class="platform-box">
+                <div class="platform-box-header">
+                  <span class="platform-tag target-tag">DESTINATION &amp; DEALER ACCOUNT</span>
+                  <h3>Speedotrack Platform &amp; Client Assignment</h3>
+                </div>
+                <div class="form-group" style="margin-bottom: 12px;">
+                  <label for="speedoMigDomainInput">Speedotrack Server Base URL</label>
+                  <input type="text" id="speedoMigDomainInput" value="https://server.cartracker.com.ng/" autocomplete="off" spellcheck="false">
+                </div>
+                <div class="form-grid" style="grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
+                  <div class="form-group">
+                    <label for="speedoMigUsernameInput">Dealer Username</label>
+                    <input type="text" id="speedoMigUsernameInput" placeholder="e.g. cartrack" autocomplete="username" spellcheck="false">
+                  </div>
+                  <div class="form-group">
+                    <label for="speedoMigPasswordInput">Dealer Password</label>
+                    <div class="input-wrapper">
+                      <input type="password" id="speedoMigPasswordInput" placeholder="Dealer CPanel password" autocomplete="current-password">
+                      <button type="button" id="toggleSpeedoMigPasswordBtn" class="btn-icon" title="Toggle visibility">👁️</button>
+                    </div>
+                  </div>
+                </div>
+                <div class="form-grid" style="grid-template-columns: 1.3fr 1fr; gap: 12px; margin-bottom: 14px;">
+                  <div class="form-group">
+                    <label for="speedoClientEmailInput">Client Account Email</label>
+                    <input type="email" id="speedoClientEmailInput" placeholder="Leave empty to use Car Tracker email" autocomplete="off">
+                  </div>
+                  <div class="form-group">
+                    <label for="speedoClientDefaultPassInput">Default Client Password</label>
+                    <input type="text" id="speedoClientDefaultPassInput" value="Tracker1" autocomplete="off">
+                  </div>
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                  <button type="button" id="speedoMigConnectBtn" class="btn btn-sm btn-secondary">
+                    <span class="btn-spinner hidden" id="speedoMigSpinner"></span>
+                    <span id="speedoMigBtnText">⚡ Test Speedotrack Dealer Login</span>
+                  </button>
+                  <div id="speedoMigStatusBadge" class="status-pill status-untested">
+                    <span class="status-dot"></span>
+                    <span id="speedoMigStatusText">Not Tested</span>
+                  </div>
+                </div>
+                <div style="margin-top: 14px; padding: 10px 12px; border-radius: 8px; background: rgba(6, 182, 212, 0.08); border: 1px solid rgba(6, 182, 212, 0.2); font-size: 0.8rem; color: var(--text-muted);">
+                  💡 <strong>Migration Mode:</strong> Creates client account under dealer <code>cartrack</code>, adds all trackers (IMEI, plate, SIM), and assigns them. For OTA hardware repointing to <code>server.cartracker.com.ng</code>, switch to the <strong>Vehicle Repointing &amp; OTA Cutover</strong> tab.
+                </div>
+              </div>
+            </div>
+            <div id="ctAlertBox" class="alert hidden"></div>
+          </div>
+        </section>
+
+        <!-- Fleet Selection Table Card -->
+        <section class="card review-card hidden" id="migrationFleetSection">
+          <div class="card-header">
+            <div class="card-title-group">
+              <span class="step-badge">2</span>
+              <h2>Car Tracker Nigeria Live Fleet Selection</h2>
+            </div>
+            <div class="table-stats-bar">
+              <div class="stat-item"><span class="stat-num" id="migFleetTotal">0</span> Total Vehicles</div>
+              <div class="stat-item" title="Actively transmitting live motion"><span class="stat-num" id="migFleetOnline" style="color: var(--success);">0</span> Moving</div>
+              <div class="stat-item" title="Connected & awaiting motion (Socket is OPEN - GPRS Ready)"><span class="stat-num" id="migFleetAck" style="color: #38bdf8;">0</span> Standby (Ack)</div>
+              <div class="stat-item" title="Deep sleep / Disconnected"><span class="stat-num" id="migFleetOffline" style="color: var(--text-dim);">0</span> Offline</div>
+              <div class="stat-item stat-warning" style="background: rgba(6, 182, 212, 0.1); border-color: rgba(6, 182, 212, 0.3);">
+                Selected: <strong id="migSelectedCount">0</strong>
+              </div>
+            </div>
+          </div>
+
+          <div class="card-body">
+            <!-- Table Action Toolbar -->
+            <div class="fleet-toolbar">
+              <div class="search-box">
+                <input type="text" id="migSearchInput" placeholder="🔍 Search by vehicle name, IMEI, plate, or SIM...">
+              </div>
+              <div class="filter-group">
+                <button type="button" class="btn btn-sm btn-outline active" data-filter="all" id="filterAllBtn">All (<span id="countFilterAll">0</span>)</button>
+                <button type="button" class="btn btn-sm btn-outline" data-filter="gprs_ready" id="filterGprsReadyBtn" style="border-color: rgba(6, 182, 212, 0.4); color: #38bdf8;">⚡ GPRS Ready (<span id="countFilterGprsReady">0</span>)</button>
+                <button type="button" class="btn btn-sm btn-outline" data-filter="online" id="filterOnlineBtn">Moving (<span id="countFilterOnline">0</span>)</button>
+                <button type="button" class="btn btn-sm btn-outline" data-filter="ack" id="filterAckBtn">Standby (<span id="countFilterAck">0</span>)</button>
+                <button type="button" class="btn btn-sm btn-outline" data-filter="offline" id="filterOfflineBtn">Offline (<span id="countFilterOffline">0</span>)</button>
+              </div>
+              <div class="batch-select-group">
+                <button type="button" id="selectPilotBtn" class="btn btn-sm btn-secondary" title="Select single vehicle for pilot test">🧪 Select 1 (Pilot)</button>
+                <button type="button" id="selectBatch5Btn" class="btn btn-sm btn-outline">📦 Top 5</button>
+                <button type="button" id="selectBatch10Btn" class="btn btn-sm btn-outline">📦 Top 10</button>
+                <button type="button" id="selectAllMigBtn" class="btn btn-sm btn-outline">Select All</button>
+                <button type="button" id="deselectAllMigBtn" class="btn btn-sm btn-outline">Clear Selection</button>
+              </div>
+            </div>
+
+            <!-- Batch Expiration Toolbar -->
+            <div class="expiration-toolbar" style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-bottom: 12px; padding: 10px 14px; background: rgba(15, 23, 42, 0.45); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 8px;">
+              <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                <span style="font-size: 0.85rem; font-weight: 600; color: #f8fafc;">📅 Batch Expiration:</span>
+                <input type="date" id="batchMigExpireDateInput" class="form-input" style="padding: 4px 8px; font-size: 0.82rem; font-family: var(--font-mono); width: 145px; border-radius: 6px;">
+                <button type="button" id="applyBatchExpireBtn" class="btn btn-sm btn-secondary" title="Apply this expiration date to all selected vehicles">
+                  ✓ Apply to Selected (<span id="batchExpireSelectedCount">0</span>)
+                </button>
+                <button type="button" id="setUnlimitedBatchBtn" class="btn btn-sm btn-outline" title="Set selected vehicles to Unlimited / Lifetime access">
+                  ♾️ Set Selected to Unlimited
+                </button>
+              </div>
+              <div id="accountExpNotice" style="font-size: 0.78rem; color: var(--text-dim);">
+                💡 Dates fetched from Car Tracker Nigeria are pre-filled below. You can also edit any vehicle's date directly in the table.
+              </div>
+            </div>
+
+            <!-- Vehicles Table -->
+            <div class="table-container" style="max-height: 480px;">
+              <table class="data-table" id="migTable">
+                <thead>
+                  <tr>
+                    <th style="width: 36px;"><input type="checkbox" id="migMasterCheckbox"></th>
+                    <th style="width: 85px;">Status</th>
+                    <th>Vehicle Name</th>
+                    <th>Device IMEI</th>
+                    <th style="width: 120px;">Plate Number</th>
+                    <th style="width: 100px;">Protocol</th>
+                    <th style="width: 130px;">SIM Number</th>
+                    <th style="width: 145px;">Expiration Date</th>
+                    <th style="width: 150px;">Last Location Ping</th>
+                    <th>Migration Pipeline State</th>
+                  </tr>
+                </thead>
+                <tbody id="migTableBody">
+                  <!-- Injected dynamically -->
+                </tbody>
+              </table>
+            </div>
+
+            <!-- Execution Panel -->
+            <div class="execution-panel" style="margin-top: 20px;">
+              <div class="execution-controls" style="display: flex; gap: 14px; flex-wrap: wrap; align-items: center;">
+                <button id="btnMigrateAccountAndHistory" class="btn btn-primary btn-lg" style="box-shadow: 0 4px 15px rgba(6, 182, 212, 0.3);">
+                  📦 Provision &amp; Link Selected Vehicles (<span id="btnMigCount">0</span>)
+                </button>
+                <button id="startPilotMigrateBtn" class="btn btn-outline btn-lg" style="border-color: rgba(255, 255, 255, 0.2);">
+                  🧪 Pilot Provision 1 Vehicle
+                </button>
+                <button id="pauseMigrateBtn" class="btn btn-secondary btn-lg hidden">
+                  ⏸️ Pause
+                </button>
+                <button id="stopMigrateBtn" class="btn btn-danger-outline btn-lg hidden">
+                  ⏹️ Cancel
+                </button>
+              </div>
+
+              <!-- Progress Indicator -->
+              <div class="progress-wrapper hidden" id="migProgressWrapper" style="margin-top: 16px;">
+                <div class="progress-meta">
+                  <span class="progress-title" id="migProgressTitle">Provisioning in progress...</span>
+                  <span class="progress-percent" id="migProgressPercent">0%</span>
+                </div>
+                <div class="progress-bar-bg">
+                  <div class="progress-bar-fill" id="migProgressBarFill" style="width: 0%"></div>
+                </div>
+                <div class="progress-details" id="migProgressDetails">
+                  <span>Vehicles Provisioned &amp; Linked: <strong id="migVehiclesDone">0</strong> / <strong id="migVehiclesTotal">0</strong></span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Live Migration Audit Terminal -->
+        <section class="card terminal-card hidden" id="migTerminalSection">
+          <div class="card-header">
+            <div class="card-title-group">
+              <span class="step-badge">3</span>
+              <h2>Live Migration Terminal</h2>
+            </div>
+            <div class="terminal-meta">
+              <button type="button" id="clearMigTerminalBtn" class="btn btn-sm btn-outline">Clear Logs</button>
+              <button type="button" id="downloadMigLogBtn" class="btn btn-sm btn-outline">💾 Save Audit Log</button>
+            </div>
+          </div>
+          <div class="card-body terminal-body">
+            <div class="terminal-output" id="migTerminalOutput">
+              <div class="terminal-line log-system">Speedotrack Live Migration Engine initialized.</div>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <!-- VIEW 3: SPEEDOTRACK CLIENT VEHICLE REPOINTING & LIVE CUTOVER -->
+      <div id="repointView" class="hidden">
+        <!-- Section 1: Client Account Authentication & Fleet Loader -->
+        <section class="card config-card" id="repointAuthSection">
+          <div class="card-header">
+            <div class="card-title-group">
+              <span class="step-badge">1</span>
+              <h2>Speedotrack Client Account Login &amp; Fleet Loader</h2>
+            </div>
+            <span class="info-note">Direct Client Login or Dealer Quick-Access</span>
+          </div>
+          <div class="card-body">
+            <div class="form-grid" style="grid-template-columns: 1.2fr 1.2fr 1fr; gap: 16px; margin-bottom: 16px;">
+              <div class="form-group">
+                <label for="repointDomainInput">Speedotrack Server Base URL</label>
+                <div class="input-wrapper">
+                  <input type="text" id="repointDomainInput" value="https://server.cartracker.com.ng/" autocomplete="off" spellcheck="false">
+                </div>
+                <span class="field-hint">Target GPS tracking server URL</span>
+              </div>
+              <div class="form-group">
+                <label for="repointClientEmailInput">Client Account Email / Username</label>
+                <div class="input-wrapper">
+                  <input type="text" id="repointClientEmailInput" placeholder="e.g. Olawale.Olayinka@clicktgi.net" autocomplete="username" spellcheck="false">
+                </div>
+                <span class="field-hint">Client account username or email</span>
+              </div>
+              <div class="form-group">
+                <label for="repointClientPasswordInput">Client Account Password</label>
+                <div class="input-wrapper">
+                  <input type="password" id="repointClientPasswordInput" value="Tracker1" placeholder="Client personal password" autocomplete="current-password">
+                  <button type="button" id="toggleRepointPasswordBtn" class="btn-icon" title="Toggle visibility">👁️</button>
+                </div>
+                <span class="field-hint">Personal password for this client account (Default: Tracker1)</span>
+              </div>
+            </div>
+
+            <!-- Login Actions -->
+            <div style="display: flex; justify-content: flex-end; align-items: center; flex-wrap: wrap; gap: 14px;">
+              <div id="repointStatusBadge" class="status-pill status-untested">
+                <span class="status-dot"></span>
+                <span id="repointStatusText">Fleet Not Loaded</span>
+              </div>
+              <button type="button" id="repointLoadFleetBtn" class="btn btn-primary">
+                <span class="btn-spinner hidden" id="repointLoadSpinner"></span>
+                <span id="repointLoadBtnText">🚀 Pull Client Fleet from Speedotrack</span>
+              </button>
+            </div>
+            <div id="repointAlertBox" class="alert hidden" style="margin-top: 14px;"></div>
+          </div>
+        </section>
+
+        <!-- Section 2: Fleet Pointing & OTA Cutover Switchboard -->
+        <section class="card review-card hidden" id="repointFleetSection">
+          <div class="card-header">
+            <div class="card-title-group">
+              <span class="step-badge">2</span>
+              <h2>Client Fleet Pointing &amp; Cutover Switchboard</h2>
+            </div>
+            <div class="table-stats-bar">
+              <div class="stat-item"><span class="stat-num" id="repointFleetTotal">0</span> Vehicles</div>
+              <div class="stat-item" title="Not yet transmitting to server.cartracker.com.ng"><span class="stat-num" id="repointFleetPending" style="color: var(--warning);">0</span> ⏳ Pending Repoint</div>
+              <div class="stat-item" title="Already transmitting live to server.cartracker.com.ng"><span class="stat-num" id="repointFleetPointed" style="color: var(--success);">0</span> ✅ Pointed</div>
+              <div class="stat-item stat-warning" style="background: rgba(6, 182, 212, 0.1); border-color: rgba(6, 182, 212, 0.3);">
+                Selected for Repoint: <strong id="repointSelectedCount">0</strong>
+              </div>
+            </div>
+          </div>
+
+          <div class="card-body">
+            <!-- Toolbar & Filter Pills -->
+            <div class="fleet-toolbar">
+              <div class="search-box">
+                <input type="text" id="repointSearchInput" placeholder="🔍 Filter client fleet by vehicle name, IMEI, plate, or SIM...">
+              </div>
+              <div class="filter-group">
+                <button type="button" class="btn btn-sm btn-outline" data-repoint-filter="all" id="filterRepointAllBtn">All (<span id="repointFilterAllCount">0</span>)</button>
+                <button type="button" class="btn btn-sm btn-outline active" data-repoint-filter="pending" id="filterRepointPendingBtn" style="border-color: rgba(245, 158, 11, 0.5); color: #f59e0b;">⏳ Pending Repoint (<span id="repointFilterPendingCount">0</span>)</button>
+                <button type="button" class="btn btn-sm btn-outline" data-repoint-filter="pointed" id="filterRepointPointedBtn" style="border-color: rgba(16, 185, 129, 0.4); color: #10b981;">✅ Already Pointed (<span id="repointFilterPointedCount">0</span>)</button>
+                <button type="button" class="btn btn-sm btn-outline" data-repoint-filter="gprs" id="filterRepointGprsBtn" style="border-color: rgba(6, 182, 212, 0.4); color: #38bdf8;">⚡ GPRS Ready on Old Server (<span id="repointFilterGprsCount">0</span>)</button>
+              </div>
+              <div class="batch-select-group">
+                <button type="button" id="repointSelectPendingBtn" class="btn btn-sm btn-secondary" title="Select all vehicles pending cutover">Select All Pending</button>
+                <button type="button" id="repointSelectPilotBtn" class="btn btn-sm btn-outline" title="Select single vehicle for safe pilot test">🧪 Select 1 (Pilot)</button>
+                <button type="button" id="repointSelectAllBtn" class="btn btn-sm btn-outline">Select All Filtered</button>
+                <button type="button" id="repointDeselectAllBtn" class="btn btn-sm btn-outline">Clear Selection</button>
+              </div>
+            </div>
+
+            <!-- Vehicles Table -->
+            <div class="table-container" style="max-height: 480px;">
+              <table class="data-table" id="repointTable">
+                <thead>
+                  <tr>
+                    <th style="width: 36px;"><input type="checkbox" id="repointMasterCheckbox"></th>
+                    <th style="width: 140px;">Pointed Status</th>
+                    <th>Vehicle Name</th>
+                    <th>Device IMEI</th>
+                    <th style="width: 120px;">Plate Number</th>
+                    <th style="width: 130px;">SIM Number</th>
+                    <th style="width: 160px;">Speedotrack Last Ping</th>
+                    <th>Cutover Status / Action</th>
+                  </tr>
+                </thead>
+                <tbody id="repointTableBody">
+                  <!-- Injected dynamically -->
+                </tbody>
+              </table>
+            </div>
+
+            <!-- OTA Repoint Controls & Command Bar -->
+            <div class="execution-panel" style="margin-top: 20px; background: rgba(15, 23, 42, 0.7); border: 1px solid var(--border-subtle); border-radius: 12px; padding: 18px 20px;">
+              <div class="form-grid" style="grid-template-columns: 1.5fr 0.9fr 0.8fr 2fr 1fr; gap: 14px; margin-bottom: 16px; align-items: end;">
+                <div class="form-group">
+                  <label for="repointGatewaySelect">
+                    Dispatch Gateway
+                    <span class="tooltip-icon" title="Where devices are currently connected. Must be Car Tracker Nigeria because trackers are currently online there!">ℹ️</span>
+                  </label>
+                  <select id="repointGatewaySelect">
+                    <option value="cartracker" selected>⚡ Car Tracker Nigeria (Active Sockets)</option>
+                    <option value="speedotrack">Speedotrack Internal Queue</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label for="repointTargetIpInput">Target IP</label>
+                  <input type="text" id="repointTargetIpInput" value="103.143.148.122" spellcheck="false">
+                </div>
+                <div class="form-group">
+                  <label for="repointTargetPortInput">Target Port</label>
+                  <input type="text" id="repointTargetPortInput" value="10202" spellcheck="false">
+                </div>
+                <div class="form-group">
+                  <label for="repointOtaCommandInput">
+                    Concox / GT06 OTA Command
+                    <span class="tooltip-icon" title="Standard Concox activation protocol command sent through device socket: SERVER,0,103.143.148.122,10202,0#">ℹ️</span>
+                  </label>
+                  <div class="input-wrapper">
+                    <input type="text" id="repointOtaCommandInput" value="SERVER,0,103.143.148.122,10202,0#" style="font-family: var(--font-mono); font-size: 0.88rem;" spellcheck="false">
+                    <button type="button" id="repointResetCmdBtn" class="btn-icon" title="Reset default command">🔄</button>
+                  </div>
+                </div>
+                <div class="form-group">
+                  <label for="repointChannelSelect">Delivery Channel</label>
+                  <select id="repointChannelSelect">
+                    <option value="gprs" selected>GPRS Socket (Live)</option>
+                    <option value="sms">SMS (Wakeup)</option>
+                  </select>
+                </div>
+              </div>
+
+
+              <!-- Action Buttons -->
+              <div class="execution-controls" style="display: flex; gap: 14px; flex-wrap: wrap; align-items: center;">
+                <button id="btnExecuteRepoint" class="btn btn-primary btn-lg" style="box-shadow: 0 4px 15px rgba(6, 182, 212, 0.3);">
+                  📡 Dispatch Repoint to Selected (<span id="btnRepointActionCount">0</span>)
+                </button>
+                <button type="button" id="btnVerifyCutoverLive" class="btn btn-secondary btn-lg" style="border-color: #10b981; color: #10b981; background: rgba(16, 185, 129, 0.12); box-shadow: 0 4px 15px rgba(16, 185, 129, 0.2);">
+                  🔄 Verify Live Cutover on Speedotrack
+                </button>
+                <button id="pauseRepointBtn" class="btn btn-secondary btn-lg hidden">
+                  ⏸️ Pause
+                </button>
+                <button id="stopRepointBtn" class="btn btn-danger-outline btn-lg hidden">
+                  ⏹️ Cancel
+                </button>
+              </div>
+
+              <!-- Progress Indicator -->
+              <div class="progress-wrapper hidden" id="repointProgressWrapper" style="margin-top: 16px;">
+                <div class="progress-meta">
+                  <span class="progress-title" id="repointProgressTitle">Repoint dispatch in progress...</span>
+                  <span class="progress-percent" id="repointProgressPercent">0%</span>
+                </div>
+                <div class="progress-bar-bg">
+                  <div class="progress-bar-fill" id="repointProgressBarFill" style="width: 0%"></div>
+                </div>
+                <div class="progress-details" id="repointProgressDetails">
+                  <span>Commands Sent: <strong id="repointSentCount">0</strong> / <strong id="repointTotalToProcess">0</strong></span>
+                  <span>Cutover Confirmed on Speedotrack: <strong id="repointConfirmedCount" style="color: var(--success);">0</strong></span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Section 3: Live Repoint & OTA Audit Terminal -->
+        <section class="card terminal-card hidden" id="repointTerminalSection">
+          <div class="card-header">
+            <div class="card-title-group">
+              <span class="step-badge">3</span>
+              <h2>Live Repoint &amp; Cutover Audit Terminal</h2>
+            </div>
+            <div class="terminal-meta">
+              <button type="button" id="clearRepointTerminalBtn" class="btn btn-sm btn-outline">Clear Logs</button>
+              <button type="button" id="downloadRepointLogBtn" class="btn btn-sm btn-outline">💾 Save Audit Log</button>
+            </div>
+          </div>
+          <div class="card-body terminal-body">
+            <div class="terminal-output" id="repointTerminalOutput">
+              <div class="terminal-line log-system">Speedotrack Vehicle Repoint &amp; OTA Cutover Switchboard ready.</div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="app-footer">
+      <p>Speedotrack Bulk Provisioner &bull; Local proxy running on <code>http://localhost:3000</code> &bull; Direct Speedotrack HTTP API 1.9 compatibility</p>
+    </footer>
+  </div>
+
+  <script src="app.js?v=2.7.0"></script>
+</body>
+</html>
